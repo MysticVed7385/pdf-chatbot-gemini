@@ -21,13 +21,8 @@ st.title("📄 Chat with PDF using LangChain & Google Gemini")
 
 
 # ---------------- API KEY ----------------
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-if not GOOGLE_API_KEY:
-    st.error("GOOGLE_API_KEY not found. Add it to .env or Streamlit Secrets.")
-    st.stop()
-
-genai.configure(api_key=GOOGLE_API_KEY)
+if "GOOGLE_API_KEY" in st.secrets:
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 
 # ---------------- FUNCTIONS ----------------
