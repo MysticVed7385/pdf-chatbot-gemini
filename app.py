@@ -8,7 +8,7 @@ from langchain_google_genai import (
     GoogleGenerativeAIEmbeddings,
     ChatGoogleGenerativeAI
 )
-from langchain.chains import RetrievalQA
+from langchain.chains.retrieval_qa import RetrievalQA
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
