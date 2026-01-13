@@ -8,7 +8,10 @@ from langchain_google_genai import (
     GoogleGenerativeAIEmbeddings,
     ChatGoogleGenerativeAI
 )
-from langchain.chains.retrieval_qa import RetrievalQA
+
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
+from langchain_core.prompts import ChatPromptTemplate
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -53,22 +56,32 @@ def create_vector_store(chunks):
     return FAISS.from_texts(chunks, embeddings)
 
 
-def get_qa_chain(vector_store):
+def get_chain(vector_store):
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-pro",
         temperature=0.2
     )
 
-    return RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vector_store.as_retriever(),
-        return_source_documents=False
+    prompt = ChatPromptTemplate.from_template(
+        """You are a helpful assistant.
+        Answer the question using ONLY the provided context.
+
+        Context:
+        {context}
+
+        Question:
+        {input}
+        """
     )
 
+    document_chain = create_stuff_documents_chain(llm, prompt)
+    retriever = vector_store.as_retriever()
+
+    return create_retrieval_chain(retriever, document_chain)
+
 # ---------------- SESSION STATE ----------------
-if "qa_chain" not in st.session_state:
-    st.session_state.qa_chain = None
+if "chain" not in st.session_state:
+    st.session_state.chain = None
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -95,7 +108,7 @@ with st.sidebar:
 
                 chunks = get_text_chunks(raw_text)
                 vector_store = create_vector_store(chunks)
-                st.session_state.qa_chain = get_qa_chain(vector_store)
+                st.session_state.chain = get_chain(vector_store)
 
                 st.success("✅ PDF processed successfully!")
 
@@ -105,14 +118,13 @@ st.subheader("💬 Ask Questions")
 question = st.chat_input("Ask something about your PDF")
 
 if question:
-    if st.session_state.qa_chain is None:
+    if st.session_state.chain is None:
         st.warning("⚠️ Please upload and process a PDF first.")
     else:
-        result = st.session_state.qa_chain.run(question)
+        result = st.session_state.chain.invoke({"input": question})
+        answer = result["answer"]
 
-        st.session_state.chat_history.append(
-            (question, result)
-        )
+        st.session_state.chat_history.append((question, answer))
 
 # ---------------- DISPLAY CHAT ----------------
 for q, a in st.session_state.chat_history:
