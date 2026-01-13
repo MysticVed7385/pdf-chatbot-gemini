@@ -8,7 +8,7 @@ from langchain_google_genai import (
     GoogleGenerativeAIEmbeddings,
     ChatGoogleGenerativeAI
 )
-from langchain.chains import ConversationalRetrievalChain
+from langchain.chains import RetrievalQA
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -19,10 +19,9 @@ st.set_page_config(
 
 st.title("📄 Chat with PDF using LangChain & Google Gemini")
 
-# ---------------- API KEY (CORRECT WAY) ----------------
+# ---------------- API KEY ----------------
 if "GOOGLE_API_KEY" in st.secrets:
-    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
     st.error("❌ GOOGLE_API_KEY not found in Streamlit Secrets")
     st.stop()
@@ -54,20 +53,22 @@ def create_vector_store(chunks):
     return FAISS.from_texts(chunks, embeddings)
 
 
-def get_conversation_chain(vector_store):
+def get_qa_chain(vector_store):
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-pro",
         temperature=0.2
     )
 
-    return ConversationalRetrievalChain.from_llm(
+    return RetrievalQA.from_chain_type(
         llm=llm,
-        retriever=vector_store.as_retriever()
+        chain_type="stuff",
+        retriever=vector_store.as_retriever(),
+        return_source_documents=False
     )
 
 # ---------------- SESSION STATE ----------------
-if "conversation" not in st.session_state:
-    st.session_state.conversation = None
+if "qa_chain" not in st.session_state:
+    st.session_state.qa_chain = None
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -94,7 +95,7 @@ with st.sidebar:
 
                 chunks = get_text_chunks(raw_text)
                 vector_store = create_vector_store(chunks)
-                st.session_state.conversation = get_conversation_chain(vector_store)
+                st.session_state.qa_chain = get_qa_chain(vector_store)
 
                 st.success("✅ PDF processed successfully!")
 
@@ -104,16 +105,13 @@ st.subheader("💬 Ask Questions")
 question = st.chat_input("Ask something about your PDF")
 
 if question:
-    if st.session_state.conversation is None:
+    if st.session_state.qa_chain is None:
         st.warning("⚠️ Please upload and process a PDF first.")
     else:
-        response = st.session_state.conversation({
-            "question": question,
-            "chat_history": st.session_state.chat_history
-        })
+        result = st.session_state.qa_chain.run(question)
 
         st.session_state.chat_history.append(
-            (question, response["answer"])
+            (question, result)
         )
 
 # ---------------- DISPLAY CHAT ----------------
