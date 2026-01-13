@@ -4,11 +4,11 @@ from PyPDF2 import PdfReader
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import (
+    GoogleGenerativeAIEmbeddings,
+    ChatGoogleGenerativeAI
+)
 from langchain.chains import ConversationalRetrievalChain
-
-import google.generativeai as genai
-
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -19,11 +19,13 @@ st.set_page_config(
 
 st.title("📄 Chat with PDF using LangChain & Google Gemini")
 
-
-# ---------------- API KEY ----------------
+# ---------------- API KEY (CORRECT WAY) ----------------
 if "GOOGLE_API_KEY" in st.secrets:
-    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-
+    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+else:
+    st.error("❌ GOOGLE_API_KEY not found in Streamlit Secrets")
+    st.stop()
 
 # ---------------- FUNCTIONS ----------------
 def get_pdf_text(pdf_docs):
@@ -31,7 +33,8 @@ def get_pdf_text(pdf_docs):
     for pdf in pdf_docs:
         reader = PdfReader(pdf)
         for page in reader.pages:
-            text += page.extract_text()
+            if page.extract_text():
+                text += page.extract_text()
     return text
 
 
@@ -46,17 +49,15 @@ def get_text_chunks(text):
 @st.cache_resource
 def create_vector_store(chunks):
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001",
-        google_api_key=GOOGLE_API_KEY
+        model="models/embedding-001"
     )
     return FAISS.from_texts(chunks, embeddings)
 
 
 def get_conversation_chain(vector_store):
     llm = ChatGoogleGenerativeAI(
-        model="gemini-pro",
-        temperature=0.2,
-        google_api_key=GOOGLE_API_KEY
+        model="gemini-1.5-pro",
+        temperature=0.2
     )
 
     return ConversationalRetrievalChain.from_llm(
@@ -64,14 +65,12 @@ def get_conversation_chain(vector_store):
         retriever=vector_store.as_retriever()
     )
 
-
 # ---------------- SESSION STATE ----------------
 if "conversation" not in st.session_state:
     st.session_state.conversation = None
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
@@ -84,29 +83,40 @@ with st.sidebar:
 
     if st.button("Process PDF"):
         if not pdf_docs:
-            st.warning("Please upload at least one PDF.")
+            st.warning("⚠️ Please upload at least one PDF.")
         else:
-            with st.spinner("Processing PDF..."):
+            with st.spinner("🔍 Processing PDF..."):
                 raw_text = get_pdf_text(pdf_docs)
+
+                if not raw_text.strip():
+                    st.error("❌ Unable to extract text from PDF")
+                    st.stop()
+
                 chunks = get_text_chunks(raw_text)
                 vector_store = create_vector_store(chunks)
                 st.session_state.conversation = get_conversation_chain(vector_store)
-                st.success("PDF processed successfully!")
 
+                st.success("✅ PDF processed successfully!")
 
 # ---------------- CHAT ----------------
 st.subheader("💬 Ask Questions")
 
 question = st.chat_input("Ask something about your PDF")
 
-if question and st.session_state.conversation:
-    response = st.session_state.conversation({
-        "question": question,
-        "chat_history": st.session_state.chat_history
-    })
-    st.session_state.chat_history.append((question, response["answer"]))
+if question:
+    if st.session_state.conversation is None:
+        st.warning("⚠️ Please upload and process a PDF first.")
+    else:
+        response = st.session_state.conversation({
+            "question": question,
+            "chat_history": st.session_state.chat_history
+        })
 
+        st.session_state.chat_history.append(
+            (question, response["answer"])
+        )
 
+# ---------------- DISPLAY CHAT ----------------
 for q, a in st.session_state.chat_history:
     with st.chat_message("user"):
         st.write(q)
