@@ -2,16 +2,11 @@ import os
 import streamlit as st
 from PyPDF2 import PdfReader
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_google_genai import (
-    GoogleGenerativeAIEmbeddings,
-    ChatGoogleGenerativeAI
-)
-
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_retrieval_chain
-from langchain_core.prompts import ChatPromptTemplate
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain.embeddings import GoogleGenerativeAIEmbeddings
+from langchain.chat_models import ChatGoogleGenerativeAI
+from langchain.chains import ConversationalRetrievalChain
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -20,13 +15,13 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📄 Chat with PDF using LangChain & Google Gemini")
+st.title("📄 Chat with PDF using Gemini AI")
 
 # ---------------- API KEY ----------------
 if "GOOGLE_API_KEY" in st.secrets:
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("❌ GOOGLE_API_KEY not found in Streamlit Secrets")
+    st.error("❌ GOOGLE_API_KEY missing in Streamlit secrets")
     st.stop()
 
 # ---------------- FUNCTIONS ----------------
@@ -35,12 +30,11 @@ def get_pdf_text(pdf_docs):
     for pdf in pdf_docs:
         reader = PdfReader(pdf)
         for page in reader.pages:
-            if page.extract_text():
-                text += page.extract_text()
+            text += page.extract_text() or ""
     return text
 
 
-def get_text_chunks(text):
+def split_text(text):
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
@@ -49,85 +43,71 @@ def get_text_chunks(text):
 
 
 @st.cache_resource
-def create_vector_store(chunks):
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001"
-    )
+def build_vectorstore(chunks):
+    embeddings = GoogleGenerativeAIEmbeddings()
     return FAISS.from_texts(chunks, embeddings)
 
 
-def get_chain(vector_store):
+def build_chain(vstore):
     llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-pro",
+        model="gemini-pro",
         temperature=0.2
     )
 
-    prompt = ChatPromptTemplate.from_template(
-        """You are a helpful assistant.
-        Answer the question using ONLY the provided context.
-
-        Context:
-        {context}
-
-        Question:
-        {input}
-        """
+    return ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=vstore.as_retriever()
     )
 
-    document_chain = create_stuff_documents_chain(llm, prompt)
-    retriever = vector_store.as_retriever()
-
-    return create_retrieval_chain(retriever, document_chain)
-
-# ---------------- SESSION STATE ----------------
+# ---------------- SESSION ----------------
 if "chain" not in st.session_state:
     st.session_state.chain = None
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.subheader("📂 Upload PDF")
-    pdf_docs = st.file_uploader(
-        "Upload PDF files",
+    st.subheader("📂 Upload PDFs")
+    pdfs = st.file_uploader(
+        "Upload one or more PDFs",
         type=["pdf"],
         accept_multiple_files=True
     )
 
-    if st.button("Process PDF"):
-        if not pdf_docs:
-            st.warning("⚠️ Please upload at least one PDF.")
+    if st.button("Process PDFs"):
+        if not pdfs:
+            st.warning("Upload at least one PDF")
         else:
-            with st.spinner("🔍 Processing PDF..."):
-                raw_text = get_pdf_text(pdf_docs)
-
-                if not raw_text.strip():
-                    st.error("❌ Unable to extract text from PDF")
+            with st.spinner("Processing PDFs..."):
+                text = get_pdf_text(pdfs)
+                if not text.strip():
+                    st.error("No text found in PDFs")
                     st.stop()
 
-                chunks = get_text_chunks(raw_text)
-                vector_store = create_vector_store(chunks)
-                st.session_state.chain = get_chain(vector_store)
-
-                st.success("✅ PDF processed successfully!")
+                chunks = split_text(text)
+                vstore = build_vectorstore(chunks)
+                st.session_state.chain = build_chain(vstore)
+                st.success("PDFs processed successfully")
 
 # ---------------- CHAT ----------------
 st.subheader("💬 Ask Questions")
 
-question = st.chat_input("Ask something about your PDF")
+query = st.chat_input("Ask a question from the PDF")
 
-if question:
+if query:
     if st.session_state.chain is None:
-        st.warning("⚠️ Please upload and process a PDF first.")
+        st.warning("Please upload and process PDFs first")
     else:
-        result = st.session_state.chain.invoke({"input": question})
-        answer = result["answer"]
+        result = st.session_state.chain({
+            "question": query,
+            "chat_history": st.session_state.history
+        })
 
-        st.session_state.chat_history.append((question, answer))
+        st.session_state.history.append((query, result["answer"]))
 
-# ---------------- DISPLAY CHAT ----------------
-for q, a in st.session_state.chat_history:
+# ---------------- DISPLAY ----------------
+for q, a in st.session_state.history:
     with st.chat_message("user"):
         st.write(q)
     with st.chat_message("assistant"):
