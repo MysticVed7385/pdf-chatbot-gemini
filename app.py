@@ -1,26 +1,19 @@
 import streamlit as st
 from PyPDF2 import PdfReader
-from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_classic.vectorstores import FAISS
-from langchain_classic.chains import ConversationalRetrievalChain
-from langchain_classic.memory import ConversationBufferMemory
+from langchain_community.vectorstores import FAISS
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="PDF Chat AI", layout="wide")
 
-# --- CUSTOM CSS FOR CHAT UI ---
-st.markdown("""
-    <style>
-    .stChatMessage { border-radius: 10px; padding: 10px; margin: 5px 0; }
-    </style>
-""", unsafe_allow_html=True)
-
 # --- INITIALIZE SESSION STATE ---
+if "conversation" not in st.session_state:
+    st.session_state.conversation = None
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = None
-if "vector_store" not in st.session_state:
-    st.session_state.vector_store = None
+    st.session_state.chat_history = []
 
 def get_pdf_text(pdf_docs):
     text = ""
@@ -28,35 +21,22 @@ def get_pdf_text(pdf_docs):
         try:
             pdf_reader = PdfReader(pdf)
             for page in pdf_reader.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text
+                content = page.extract_text()
+                if content:
+                    text += content
         except Exception as e:
-            st.error(f"Error reading {pdf.name}: {str(e)}")
+            st.error(f"Error reading file: {e}")
     return text
 
-def get_text_chunks(text):
-    # Verified stable splitter
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=10000,
-        chunk_overlap=1000,
-        separators=["\n\n", "\n", ".", " "]
-    )
-    return text_splitter.split_text(text)
-
 def get_vector_store(text_chunks):
-    # Verify API Key from st.secrets
-    api_key = st.secrets.get("GOOGLE_API_KEY")
-    if not api_key:
-        st.error("Missing GOOGLE_API_KEY in Streamlit Secrets!")
-        return None
-        
+    api_key = st.secrets["GOOGLE_API_KEY"]
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001", 
         google_api_key=api_key
     )
-    vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
-    return vector_store
+    # Direct FAISS instantiation
+    vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
+    return vectorstore
 
 def get_conversation_chain(vector_store):
     llm = ChatGoogleGenerativeAI(
@@ -75,55 +55,51 @@ def get_conversation_chain(vector_store):
     )
     return conversation_chain
 
-def handle_userinput(user_question):
-    if st.session_state.conversation is None:
-        st.warning("⚠️ Please upload and process a PDF first.")
-        return
-
-    response = st.session_state.conversation({'question': user_question})
-    st.session_state.chat_history = response['chat_history']
-
-    for i, message in enumerate(st.session_state.chat_history):
-        if i % 2 == 0:
-            with st.chat_message("user"):
-                st.write(message.content)
-        else:
-            with st.chat_message("assistant"):
-                st.write(message.content)
-
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("📄 Document Center")
-    pdf_docs = st.file_uploader(
-        "Upload your PDFs here", 
-        accept_multiple_files=True, 
-        type=['pdf']
-    )
+    pdf_docs = st.file_uploader("Upload PDFs", accept_multiple_files=True, type=['pdf'])
     
-    if st.button("Process Documents"):
-        if not pdf_docs:
-            st.error("Please upload at least one PDF.")
-        else:
-            with st.spinner("Analyzing text..."):
-                # 1. Extract Text
+    if st.button("Process"):
+        if pdf_docs:
+            with st.spinner("Processing..."):
                 raw_text = get_pdf_text(pdf_docs)
-                if not raw_text.strip():
-                    st.error("The uploaded PDFs contain no readable text.")
-                else:
-                    # 2. Chunking
-                    text_chunks = get_text_chunks(raw_text)
-                    # 3. Vectorization
-                    vector_store = get_vector_store(text_chunks)
-                    # 4. Chain Creation
-                    st.session_state.conversation = get_conversation_chain(vector_store)
-                    st.success("Ready to chat!")
+                
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000, 
+                    chunk_overlap=100
+                )
+                chunks = text_splitter.split_text(raw_text)
+                
+                vector_store = get_vector_store(chunks)
+                st.session_state.conversation = get_conversation_chain(vector_store)
+                st.success("Done!")
+        else:
+            st.warning("Please upload a file first.")
 
-# --- MAIN CHAT AREA ---
-st.title("Chat with PDF (Gemini Pro)")
+# --- MAIN CHAT UI ---
+st.title("Chat with PDF")
 
-if "conversation" not in st.session_state:
-    st.session_state.conversation = None
+# Display chat history
+for message in st.session_state.chat_history:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-user_question = st.chat_input("Ask a question about your documents:")
-if user_question:
-    handle_userinput(user_question)
+# User Input
+if user_question := st.chat_input("Ask about your PDF:"):
+    if st.session_state.conversation is None:
+        st.warning("Please upload and process a PDF first.")
+    else:
+        # Add user message to history
+        st.session_state.chat_history.append({"role": "user", "content": user_question})
+        with st.chat_message("user"):
+            st.markdown(user_question)
+
+        # Generate response
+        response = st.session_state.conversation({'question': user_question})
+        answer = response['answer']
+
+        # Add assistant response to history
+        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.markdown(answer)
