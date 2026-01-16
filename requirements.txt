@@ -1,34 +1,24 @@
-# ULTIMATE PDF Q&A - Verified Stable Versions (January 2026)
-# Combines best practices from both implementations
-
-# Core LangChain Framework (Latest Stable)
-langchain==1.2.4
+# Core LangChain - Install in this order
+pydantic==2.10.5
+pydantic-core==2.27.2
 langchain-core==1.2.7
+langchain==1.2.4
 langchain-community==0.3.13
 langchain-text-splitters==0.3.5
 
-# Google Gemini Integration (Latest)
+# Google Gemini Integration
 langchain-google-genai==4.2.0
-google-genai>=1.55.0
-google-generativeai>=1.55.0
+google-generativeai==1.55.0
 
-# Vector Store & Embeddings
+# Vector Store
 faiss-cpu==1.13.2
 
-# PDF Processing (Latest pypdf, NOT PyPDF2)
+# PDF Processing
 pypdf==6.6.0
 
-# Web Interface (Latest Streamlit)
+# Web Interface
 streamlit==1.53.0
 
-# Environment & Configuration
+# Utilities
 python-dotenv==1.0.1
-
-# Core Dependencies
 typing-extensions>=4.5.0
-pydantic>=2.0.0
-pydantic-core>=2.0.0
-
-# Optional: Performance Optimization
-tiktoken>=0.5.1
-numpy>=1.24.0
